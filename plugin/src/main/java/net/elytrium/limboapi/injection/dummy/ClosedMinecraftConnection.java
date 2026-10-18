@@ -20,11 +20,13 @@ package net.elytrium.limboapi.injection.dummy;
 import com.velocitypowered.proxy.VelocityServer;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import io.netty.channel.Channel;
+import java.util.UUID;
 
 public class ClosedMinecraftConnection extends MinecraftConnection {
 
   public ClosedMinecraftConnection(Channel channel, VelocityServer server) {
-    super(channel, server);
+    //4.2.1 Starting from this version, the MinecraftConnection constructor adds a new sessionId parameter.
+    super(channel, server, UUID.randomUUID());
   }
 
   @Override
