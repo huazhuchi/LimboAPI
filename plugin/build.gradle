@@ -210,7 +210,7 @@ tasks.register("downloadManifest") {
   this.println("> Downloading version manifest...")
   versionManifestFile.getParentFile().mkdirs()
   if (checkIsCacheValid(versionManifestFile)) {
-    FileUtils.copyURLToFile(new URL(manifestUrl), versionManifestFile)
+    downloadWithRetry(manifestUrl, versionManifestFile, null)
   }
 }
 
@@ -233,7 +233,7 @@ File downloadVersionManifest(String version) {
 
   File output = new File(dataDirectory, "${version}/manifest.json")
   output.getParentFile().mkdirs()
-  FileUtils.copyURLToFile(new URL(optional.get().url), output)
+  downloadWithRetry(optional.get().url, output, null)
   return output
 }
 
@@ -257,6 +257,77 @@ static boolean validateServer(File file, String expected) {
   return hashBuilder.toString() == expected
 }
 
+// 带超时与重试的下载，避免网络卡死导致构建永久挂起；先写 .part 再校验 sha1 后原子替换
+static void downloadWithRetry(String url, File dest, String expectedSha1) {
+  File part = new File(dest.getParentFile(), dest.getName() + ".part")
+  for (int attempt = 1; attempt <= 5; ++attempt) {
+    try {
+      HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection()
+      connection.setConnectTimeout(30000)
+      connection.setReadTimeout(60000)
+      connection.setInstanceFollowRedirects(true)
+      connection.setRequestProperty("User-Agent", "LimboAPI-Build")
+
+      part.delete()
+      part.bytes = connection.getInputStream().bytes
+      if (expectedSha1 != null && !validateServer(part, expectedSha1)) {
+        throw new IOException("sha1 mismatch")
+      }
+
+      dest.delete()
+      if (!part.renameTo(dest)) {
+        throw new IOException("unable to move ${part.getName()} to ${dest.getName()}")
+      }
+      return
+    } catch (Exception exception) {
+      println("> Download failed (attempt ${attempt}/5) for ${dest.getName()}: ${exception.getMessage()}")
+      part.delete()
+      Thread.sleep(3000L * attempt)
+    }
+  }
+
+  throw new IllegalStateException("Unable to download ${url}")
+}
+
+// 返回目录中最新的文件修改时间，用于判断数据生成是否仍在推进
+static long newestModification(File dir) {
+  long newest = 0L
+  ['libraries', 'logs', 'generated'].each { name ->
+    File sub = new File(dir, name)
+    if (sub.exists()) {
+      sub.eachFileRecurse(FileType.FILES, { file ->
+        if (file.lastModified() > newest) {
+          newest = file.lastModified()
+        }
+      })
+    }
+  }
+
+  return newest
+}
+
+// 目录存在时才删除；Windows 下文件句柄可能被短暂占用，失败时重试后忽略（仅影响磁盘占用）
+static void deleteDirectoryIfExists(File dir) {
+  if (!dir.exists()) {
+    return
+  }
+
+  for (int attempt = 1; attempt <= 3; ++attempt) {
+    try {
+      FileUtils.deleteDirectory(dir)
+      return
+    } catch (IOException exception) {
+      Thread.sleep(1000L * attempt)
+    }
+  }
+
+  try {
+    FileUtils.forceDelete(dir)
+  } catch (Exception ignored) {
+    println("> Unable to delete ${dir}, skipped")
+  }
+}
+
 File getServerJar(String version) {
   File manifestFile = this.downloadVersionManifest(version)
   Object manifest = new JsonSlurper().parse(manifestFile)
@@ -265,7 +336,7 @@ File getServerJar(String version) {
   if (!validateServer(jarFile, manifest.downloads.server.sha1)) {
     this.println("> Downloading ${version} server...")
     jarFile.getParentFile().mkdirs()
-    FileUtils.copyURLToFile(new URL(manifest.downloads.server.url), jarFile)
+    downloadWithRetry(manifest.downloads.server.url, jarFile, manifest.downloads.server.sha1)
   }
 
   return jarFile
@@ -302,35 +373,87 @@ File generateData(MinecraftVersion version) {
     File java = new File(System.getProperty("java.home"), "bin/java")
     commandLine = ["bash", "-c", String.format(command, java)]
   }
-  commandLine.execute([], parent).waitFor()
+  // Windows 下数据生成器结束后进程不会退出，且其内部库下载可能停滞：检测到 90 秒无文件变化即结束进程，未生成有效数据则重试
+  for (int attempt = 1; attempt <= 5 && getGeneratedCache(version) == null; ++attempt) {
+    if (attempt > 1) {
+      this.println("> Retrying Minecraft data generation for ${version.getVersionName()} (attempt ${attempt}/5)...")
+    }
+
+    Process generator = commandLine.execute([], parent)
+    long generationDeadline = System.currentTimeMillis() + 1800000L
+    long lastActivity = System.currentTimeMillis()
+    long lastSignature = -1L
+
+    while (generator.isAlive() && System.currentTimeMillis() < generationDeadline) {
+      long signature = newestModification(parent)
+      if (signature != lastSignature) {
+        lastSignature = signature
+        lastActivity = System.currentTimeMillis()
+      }
+
+      // 90 秒内没有任何文件变化，判定生成已结束（或已卡死）
+      if (System.currentTimeMillis() - lastActivity > 90000L) {
+        break
+      }
+
+      Thread.sleep(2000L)
+    }
+
+    if (generator.isAlive()) {
+      generator.destroyForcibly()
+
+      // 等待进程真正退出，避免文件句柄未释放导致后续清理失败
+      long killDeadline = System.currentTimeMillis() + 15000L
+      while (generator.isAlive() && System.currentTimeMillis() < killDeadline) {
+        Thread.sleep(200L)
+      }
+    }
+  }
+
+  if (getGeneratedCache(version) == null) {
+    throw new IllegalStateException("Failed to generate Minecraft data for ${version.getVersionName()}")
+  }
 
   // Remove/compact files, reduces disk usage from ~2.9gb to ~92mb (or ~9.5mb on a compressed filesystem)
   jarFile.delete()
-  FileUtils.deleteDirectory(new File(parent, "logs"))
-  FileUtils.deleteDirectory(new File(parent, "libraries"))
-  FileUtils.deleteDirectory(new File(parent, "versions"))
+  deleteDirectoryIfExists(new File(parent, "logs"))
+  deleteDirectoryIfExists(new File(parent, "libraries"))
+  deleteDirectoryIfExists(new File(parent, "versions"))
 
   new File(targetDir, "reports/commands.json").delete()
 
-  FileUtils.deleteDirectory(new File(targetDir, ".cache"))
-  FileUtils.deleteDirectory(new File(targetDir, "reports/biome_parameters"))
-  FileUtils.deleteDirectory(new File(targetDir, "reports/biomes"))
-  FileUtils.deleteDirectory(new File(targetDir, "reports/worldgen"))
-  FileUtils.deleteDirectory(new File(targetDir, "reports/minecraft/components/item"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/datapacks"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/advancements"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/advancement"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/recipes"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/recipe"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/loot_tables"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/loot_table"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/worldgen"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/trade_set"))
-  FileUtils.deleteDirectory(new File(targetDir, "data/minecraft/villager_trades"))
+  deleteDirectoryIfExists(new File(targetDir, ".cache"))
+  deleteDirectoryIfExists(new File(targetDir, "reports/biome_parameters"))
+  deleteDirectoryIfExists(new File(targetDir, "reports/biomes"))
+  deleteDirectoryIfExists(new File(targetDir, "reports/worldgen"))
+  deleteDirectoryIfExists(new File(targetDir, "reports/minecraft/components/item"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/datapacks"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/advancements"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/advancement"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/recipes"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/recipe"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/loot_tables"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/loot_table"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/worldgen"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/trade_set"))
+  deleteDirectoryIfExists(new File(targetDir, "data/minecraft/villager_trades"))
 
   java.nio.file.Files.walk(parent.toPath(), 32).forEach { it ->
+    String path = it.toString()
+
+    // 跳过中间产物目录（可能因文件句柄被占用而未能删除）
+    if (path.contains("${File.separatorChar}libraries${File.separatorChar}")
+            || path.contains("${File.separatorChar}logs${File.separatorChar}")
+            || path.contains("${File.separatorChar}versions${File.separatorChar}")) {
+      return
+    }
+
     if (it.fileName.toString().endsWith(".json")) {
-      java.nio.file.Files.writeString(it, JsonOutput.toJson(new JsonSlurper().parse(it)))
+      try {
+        java.nio.file.Files.writeString(it, JsonOutput.toJson(new JsonSlurper().parse(it.toFile())))
+      } catch (Exception ignored) {
+        println("> Skipped unreadable json: ${it}")
+      }
     }
   }
 
