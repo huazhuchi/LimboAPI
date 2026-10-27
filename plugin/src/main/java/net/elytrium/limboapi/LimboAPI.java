@@ -114,7 +114,6 @@ import net.elytrium.limboapi.utils.ReloadListener;
 import net.kyori.adventure.nbt.CompoundBinaryTag;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.ComponentSerializer;
-import org.bstats.velocity.Metrics;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.slf4j.Logger;
 
@@ -142,7 +141,6 @@ public class LimboAPI implements LimboFactory {
   private static final MethodHandle STATE_FIELD;
 
   private final VelocityServer server;
-  private final Metrics.Factory metricsFactory;
   private final File configFile;
   private final Set<Player> players;
   private final CachedPackets packets;
@@ -163,11 +161,10 @@ public class LimboAPI implements LimboFactory {
   private EventManagerHook eventManagerHook;
 
   @Inject
-  public LimboAPI(Logger logger, ProxyServer server, Metrics.Factory metricsFactory, @DataDirectory Path dataDirectory) {
+  public LimboAPI(Logger logger, ProxyServer server, @DataDirectory Path dataDirectory) {
     setLogger(logger);
 
     this.server = (VelocityServer) server;
-    this.metricsFactory = metricsFactory;
     this.configFile = dataDirectory.resolve("config.yml").toFile();
     this.players = new HashSet<>();
     this.packetFactory = new PacketFactoryImpl();
@@ -262,8 +259,6 @@ public class LimboAPI implements LimboFactory {
     );
     this.reloadPreparedPacketFactory();
     this.reload();
-
-    this.metricsFactory.make(this, 12530);
 
     if (Settings.IMP.MAIN.CHECK_FOR_UPDATES) {
       if (!UpdatesChecker.checkVersionByURL("https://raw.githubusercontent.com/Elytrium/LimboAPI/master/VERSION", Settings.IMP.VERSION)) {

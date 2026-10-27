@@ -5,7 +5,6 @@ gradle-licenser = "1.2.0" # https://github.com/CadixDev/licenser
 gradle-shadow = "9.6.1" # https://github.com/GradleUp/shadow
 gradle-spotbugs = "6.4.8" # https://github.com/spotbugs/spotbugs-gradle-plugin
 minecraft-adventure = "5.2.0" # https://github.com/KyoriPowered/adventure
-minecraft-bstats = "3.0.0" # https://github.com/Bastian/bStats
 minecraft-velocity = "4.2.1-SNAPSHOT" # https://github.com/PaperMC/Velocity
 tool-commons-io = "2.6" # https://github.com/apache/commons-io
 tool-fastutil = "8.5.19" # https://github.com/vigna/fastutil/
@@ -20,7 +19,6 @@ elytrium-commons-utils = { module = "net.elytrium.commons:utils", version.ref = 
 elytrium-commons-velocity = { module = "net.elytrium.commons:velocity", version.ref = "elytrium-commons" }
 elytrium-fastprepare = { module = "net.elytrium:fastprepare", version.ref = "elytrium-fastprepare" }
 minecraft-adventure-nbt = { module = "net.kyori:adventure-nbt", version.ref = "minecraft-adventure" }
-minecraft-bstats-velocity = { module = "org.bstats:bstats-velocity", version.ref = "minecraft-bstats" }
 minecraft-velocity-api = { module = "com.velocitypowered:velocity-api", version.ref = "minecraft-velocity" }
 minecraft-velocity-native = { module = "com.velocitypowered:velocity-native", version.ref = "minecraft-velocity" }
 minecraft-velocity-proxy = { module = "com.velocitypowered:velocity-proxy", version.ref = "minecraft-velocity" }
