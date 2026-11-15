@@ -48,7 +48,6 @@ import com.velocitypowered.api.util.UuidUtils;
 import com.velocitypowered.natives.compression.VelocityCompressor;
 import com.velocitypowered.natives.util.Natives;
 import com.velocitypowered.proxy.VelocityServer;
-import com.velocitypowered.proxy.config.PlayerInfoForwarding;
 import com.velocitypowered.proxy.config.VelocityConfiguration;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.client.AuthSessionHandler;
@@ -179,18 +178,24 @@ public class LoginListener {
               playerKey
           );
 
-          if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
-            TAB_LIST_SETTER.accept(player, new RewritingVelocityTabList(player));
-          } else if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
-            TAB_LIST_SETTER.accept(player, new RewritingKeyedVelocityTabList(player, this.server));
-          } else {
-            TAB_LIST_SETTER.accept(player, new RewritingVelocityTabListLegacy(player, this.server));
+          try {
+            if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_19_3)) {
+              TAB_LIST_SETTER.accept(player, new RewritingVelocityTabList(player));
+            } else if (connection.getProtocolVersion().noLessThan(ProtocolVersion.MINECRAFT_1_8)) {
+              TAB_LIST_SETTER.accept(player, new RewritingKeyedVelocityTabList(player, this.server));
+            } else {
+              TAB_LIST_SETTER.accept(player, new RewritingVelocityTabListLegacy(player, this.server));
+            }
+          } catch (LinkageError e) {
+            // Velocity 4.3 changed the constructor of the keyed tab lists from ProxyServer to VelocityServer.
+            // The default tab list created by ConnectedPlayer is kept in that case.
+            LimboAPI.getLogger().warn("Unable to install the LimboAPI tab list for {}, keeping the default one", player, e);
           }
 
           if (connection.getProtocolVersion().compareTo(ProtocolVersion.MINECRAFT_1_20_2) >= 0) {
             loginHandler.setPlayer(player);
           }
-          if (this.server.canRegisterConnection(player)) {
+          if (VelocityCompat.canRegisterConnection(this.server, player)) {
             if (!connection.isClosed()) {
               // Complete the Login process.
               int threshold = this.server.getConfiguration().getCompressionThreshold();
@@ -224,7 +229,7 @@ public class LoginListener {
 
               VelocityConfiguration configuration = this.server.getConfiguration();
               UUID playerUniqueID = player.getUniqueId();
-              if (configuration.getPlayerInfoForwardingMode() == PlayerInfoForwarding.NONE) {
+              if (VelocityCompat.isPlayerInfoForwardingNone(configuration)) {
                 playerUniqueID = UuidUtils.generateOfflinePlayerUuid(player.getUsername());
               }
 

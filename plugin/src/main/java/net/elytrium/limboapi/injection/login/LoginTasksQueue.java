@@ -222,15 +222,17 @@ public class LoginTasksQueue {
         if (reason.isPresent()) {
           this.player.disconnect0(reason.get(), false);
         } else {
-          if (this.server.registerConnection(this.player)) {
-            if (connection.getActiveSessionHandler() instanceof LoginConfirmHandler confirm) {
-              confirm.waitForConfirmation(() -> this.connectToServer(logger, this.player, connection));
+          VelocityCompat.registerConnection(this.server, this.player, registered -> {
+            if (registered) {
+              if (connection.getActiveSessionHandler() instanceof LoginConfirmHandler confirm) {
+                confirm.waitForConfirmation(() -> this.connectToServer(logger, this.player, connection));
+              } else {
+                this.connectToServer(logger, this.player, connection);
+              }
             } else {
-              this.connectToServer(logger, this.player, connection);
+              this.player.disconnect0(Component.translatable("velocity.error.already-connected-proxy"), false);
             }
-          } else {
-            this.player.disconnect0(Component.translatable("velocity.error.already-connected-proxy"), false);
-          }
+          }, connection.eventLoop());
         }
       }
     }, connection.eventLoop()).exceptionally(t -> {
@@ -285,6 +287,9 @@ public class LoginTasksQueue {
         CONNECT_TO_INITIAL_SERVER_METHOD.invoke((AuthSessionHandler) this.handler, this.player);
       } catch (Throwable e) {
         throw new ReflectionException(e);
+      } finally {
+        // Velocity 4.3+ keeps the identity lock until the login is finalized and kicks the player otherwise.
+        VelocityCompat.finalizeLogin(this.server, this.player);
       }
     });
   }

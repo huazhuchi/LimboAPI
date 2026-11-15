@@ -18,12 +18,13 @@
 package net.elytrium.limboapi.server.item;
 
 import com.google.gson.Gson;
-import com.google.gson.internal.LinkedTreeMap;
+import com.google.gson.reflect.TypeToken;
 import com.velocitypowered.api.network.ProtocolVersion;
 import it.unimi.dsi.fastutil.Function;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.io.InputStreamReader;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -46,24 +47,26 @@ import net.elytrium.limboapi.server.item.type.WriteableItemComponent;
 public class SimpleItemComponentManager {
 
   private static final Gson GSON = new Gson();
+  private static final Type STRING_MAP_TYPE = new TypeToken<Map<String, String>>() {}.getType();
+  private static final Type NESTED_STRING_MAP_TYPE = new TypeToken<Map<String, Map<String, String>>>() {}.getType();
 
   private static final Map<ProtocolVersion, Object2IntMap<String>> ID = new HashMap<>();
 
   static {
-    LinkedTreeMap<String, LinkedTreeMap<String, String>> mapping = GSON.fromJson(
+    Map<String, Map<String, String>> mapping = GSON.fromJson(
         new InputStreamReader(
             Objects.requireNonNull(LimboAPI.class.getResourceAsStream("/mapping/data_component_types_mapping.json")),
             StandardCharsets.UTF_8
         ),
-        LinkedTreeMap.class
+        NESTED_STRING_MAP_TYPE
     );
 
-    LinkedTreeMap<String, String> components = GSON.fromJson(
+    Map<String, String> components = GSON.fromJson(
         new InputStreamReader(
             Objects.requireNonNull(LimboAPI.class.getResourceAsStream("/mapping/data_component_types.json")),
             StandardCharsets.UTF_8
         ),
-        LinkedTreeMap.class
+        STRING_MAP_TYPE
     );
 
     Map<String, ProtocolVersion> cache = new HashMap<>();
